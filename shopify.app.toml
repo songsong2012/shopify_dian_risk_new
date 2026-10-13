@@ -1,0 +1,21 @@
+name = "e-commerce risk management"
+handle = "e-commerce-risk-management"
+client_id = "7fc4d262ba7a5afbe8e0e52a2b3c0bb5"
+application_url = "https://shopifyriskdefence.com"
+embedded = true
+
+[access_scopes]
+scopes = "read_orders,read_all_orders,read_customers,read_products,write_orders"
+
+[auth]
+redirect_urls = [ "https://shopifyriskdefence.com/auth/callback" ]
+
+[webhooks]
+api_version = "2024-10"
+
+  [[webhooks.subscriptions]]
+  topics = [ "orders/create" ]
+  uri = "/webhooks/orders/create"
+
+[pos]
+embedded = false

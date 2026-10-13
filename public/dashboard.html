@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>电商风控管理 - e-commerce risk management</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, 'Segoe UI', 'PingFang SC', sans-serif; background: #f0f2f5; color: #1f2937; }
+  .header { background: #111827; color: #fff; padding: 16px 28px; display: flex; justify-content: space-between; align-items: center; }
+  .header h1 { font-size: 18px; font-weight: 600; }
+  .header .sub { font-size: 12px; color: #9ca3af; margin-top: 2px; }
+  .toolbar { display: flex; gap: 10px; align-items: center; }
+  .btn { border: none; border-radius: 6px; padding: 8px 16px; font-size: 13px; cursor: pointer; }
+  .btn-sync { background: #2563eb; color: #fff; }
+  .btn-sync:disabled { background: #93c5fd; cursor: not-allowed; }
+  select { padding: 7px 10px; border-radius: 6px; border: 1px solid #d1d5db; background: #fff; font-size: 13px; }
+  .stats { display: flex; gap: 14px; padding: 18px 28px; }
+  .stat-card { background: #fff; border-radius: 10px; padding: 14px 22px; min-width: 130px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .stat-card .num { font-size: 26px; font-weight: 700; }
+  .stat-card .lbl { font-size: 12px; color: #6b7280; margin-top: 2px; }
+  .num.total { color: #111827; } .num.high { color: #dc2626; } .num.mid { color: #d97706; } .num.low { color: #16a34a; }
+  .table-wrap { padding: 0 28px 30px; }
+  .table-wrap table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  th { background: #f9fafb; text-align: left; font-size: 12px; color: #6b7280; padding: 10px 14px; border-bottom: 1px solid #e5e7eb; }
+  td { padding: 12px 14px; font-size: 13px; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+  tr:hover td { background: #f9fafb; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .badge.high { background: #fee2e2; color: #dc2626; }
+  .badge.mid { background: #fef3c7; color: #d97706; }
+  .badge.low { background: #dcfce7; color: #16a34a; }
+  .badge.none { background: #f3f4f6; color: #9ca3af; }
+  .rec-approve { color: #16a34a; } .rec-review { color: #d97706; font-weight: 600; } .rec-block { color: #dc2626; font-weight: 700; }
+  .rules-list { font-size: 12px; color: #4b5563; }
+  .rules-list div { margin-top: 3px; }
+  .detail-btn { color: #2563eb; cursor: pointer; font-size: 12px; user-select: none; }
+  .detail-row td { background: #f9fafb; padding: 0; }
+  .detail-box { max-height: 420px; overflow: auto; padding: 16px; }
+  .detail-box pre { font-size: 12px; white-space: pre-wrap; word-break: break-all; color: #374151; }
+  .empty { text-align: center; padding: 50px; color: #9ca3af; font-size: 14px; }
+  .toast { position: fixed; top: 18px; right: 18px; background: #111827; color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 13px; display: none; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <h1>电商风控管理</h1>
+    <div class="sub">e-commerce risk management · 订单风险监控仪表盘</div>
+  </div>
+  <div class="toolbar">
+    <select id="levelFilter">
+      <option value="">全部风险等级</option>
+      <option value="high">高风险</option>
+      <option value="mid">中风险</option>
+      <option value="low">低风险</option>
+    </select>
+    <button class="btn btn-sync" id="syncBtn" onclick="syncOrders()">同步最新订单</button>
+  </div>
+</div>
+<div class="stats">
+  <div class="stat-card"><div class="num total" id="stTotal">0</div><div class="lbl">订单总数</div></div>
+  <div class="stat-card"><div class="num high" id="stHigh">0</div><div class="lbl">高风险</div></div>
+  <div class="stat-card"><div class="num mid" id="stMid">0</div><div class="lbl">中风险</div></div>
+  <div class="stat-card"><div class="num low" id="stLow">0</div><div class="lbl">低风险</div></div>
+</div>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>商店</th><th>订单号</th><th>金额</th><th>客户</th><th>邮箱</th>
+        <th>收货地</th><th>支付状态</th><th>下单时间</th>
+        <th>风险评分</th><th>风险等级</th><th>判定建议</th><th>命中规则</th><th></th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+  <div class="empty" id="empty" style="display:none">暂无订单数据，点击右上角『同步最新订单』拉取</div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+let orders = [];
+
+function levelBadge(level) {
+  const m = { high: ['high','高风险'], mid: ['mid','中风险'], low: ['low','低风险'] };
+  const v = m[level] || ['none','未评估'];
+  return '<span class="badge ' + v[0] + '">' + v[1] + '</span>';
+}
+
+function recText(rec) {
+  if (!rec) return '-';
+  const m = { approve: ['rec-approve','放行'], review: ['rec-review','人工审核'], block: ['rec-block','拦截'] };
+  const v = m[rec] || ['', rec];
+  return '<span class="' + v[0] + '">' + v[1] + '</span>';
+}
+
+function rulesHtml(rules) {
+  if (!rules || !rules.length) return '<span style="color:#9ca3af">无</span>';
+  try {
+    const arr = typeof rules === 'string' ? JSON.parse(rules) : rules;
+    return '<div class="rules-list">' + arr.map(r => '<div>• ' + r.rule + '（+' + r.score + '分）' + (r.reason ? '：' + r.reason : '') + '</div>').join('') + '</div>';
+  } catch (e) { return String(rules); }
+}
+
+function render() {
+  const filter = document.getElementById('levelFilter').value;
+  const list = orders.filter(o => !filter || o.risk_level === filter);
+  const tb = document.getElementById('tbody');
+  document.getElementById('empty').style.display = list.length ? 'none' : 'block';
+  tb.innerHTML = list.map(o => `
+    <tr>
+      <td>${o.shop || ''}</td>
+      <td><b>${o.order_name || o.id}</b></td>
+      <td>${o.total_price} ${o.currency}</td>
+      <td>${o.customer_name || '-'}${o.customer_orders_count ? '<br><span style="color:#9ca3af;font-size:11px">历史' + o.customer_orders_count + '单</span>' : ''}</td>
+      <td>${o.email || '-'}</td>
+      <td>${o.shipping_country || '-'}${o.shipping_city ? ' ' + o.shipping_city : ''}</td>
+      <td>${o.financial_status || '-'}</td>
+      <td>${(o.created_at || '').replace('T', ' ').substring(0, 19)}</td>
+      <td><b>${o.risk_score != null ? o.risk_score : '-'}</b></td>
+      <td>${levelBadge(o.risk_level)}</td>
+      <td>${recText(o.recommendation)}</td>
+      <td>${rulesHtml(o.triggered_rules)}</td>
+      <td><span class="detail-btn" onclick="toggleDetail(${o.id})">详情</span></td>
+    </tr>
+    <tr class="detail-row" id="detail-${o.id}" style="display:none">
+      <td colspan="13"><div class="detail-box"><pre>${escapeHtml(JSON.stringify(JSON.parse(o.raw_json || '{}'), null, 2))}</pre></div></td>
+    </tr>`).join('');
+  const cnt = l => orders.filter(o => o.risk_level === l).length;
+  document.getElementById('stTotal').textContent = orders.length;
+  document.getElementById('stHigh').textContent = cnt('high');
+  document.getElementById('stMid').textContent = cnt('mid');
+  document.getElementById('stLow').textContent = cnt('low');
+}
+
+function toggleDetail(id) {
+  const el = document.getElementById('detail-' + id);
+  el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+
+function escapeHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+async function load() {
+  try {
+    const r = await fetch('/api/orders');
+    const d = await r.json();
+    orders = d.orders || [];
+    render();
+  } catch (e) { showToast('加载失败: ' + e.message); }
+}
+
+async function syncOrders() {
+  const btn = document.getElementById('syncBtn');
+  btn.disabled = true; btn.textContent = '同步中...';
+  try {
+    const r = await fetch('/api/orders/sync', { method: 'POST' });
+    const d = await r.json();
+    if (d.error) { showToast('同步失败: ' + d.error); }
+    else { showToast('同步成功：拉取 ' + d.synced + ' 个订单，评估 ' + d.assessed + ' 个'); load(); }
+  } catch (e) { showToast('同步失败: ' + e.message); }
+  btn.disabled = false; btn.textContent = '同步最新订单';
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 3500);
+}
+
+document.getElementById('levelFilter').onchange = render;
+load();
+</script>
+</body>
+</html>
