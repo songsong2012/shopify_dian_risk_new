@@ -4,6 +4,7 @@ const express = require('express');
 const path = require('path');
 const { evaluateOrder } = require('./lib/rules');
 const { upsertOrder, saveAssessment, listOrders } = require('./lib/db');
+const { setAdminUser, login, logout, verifyAdminSession, verifyShopifyToken } = require('./lib/auth');
 
 const { fetchOrders, getClientCredentialsToken } = require('./lib/shopifyApi');
 
@@ -31,23 +32,56 @@ function verifySessionToken(token) {
   }
 }
 
-// 仪表盘页面（支持商店后台嵌入与直接访问）
-app.get('/dashboard', (req, res) => {
-  if (req.query.id_token) {
-    const payload = verifySessionToken(req.query.id_token);
-    if (payload) {
-      console.log('Embedded dashboard access, shop:', payload.dest || payload.iss);
-    } else {
-      console.log('Embedded dashboard access with invalid token');
-    }
+// 登录页
+app.get('/login', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+// 管理员登录
+app.post('/api/login', (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: '请输入用户名和密码' });
+  const token = login(username, password);
+  if (!token) return res.status(401).json({ error: '用户名或密码错误' });
+  res.setHeader('Set-Cookie', `admin_session=${token}; HttpOnly; Path=/; Max-Age=86400; SameSite=Lax`);
+  res.json({ ok: true });
+});
+
+// 登出
+app.post('/api/logout', (req, res) => {
+  const m = /admin_session=([^;]+)/.exec(req.headers.cookie || '');
+  if (m) logout(m[1]);
+  res.setHeader('Set-Cookie', 'admin_session=; HttpOnly; Path=/; Max-Age=0');
+  res.json({ ok: true });
+});
+
+// 双通道身份识别：返回 { role: 'admin' } 或 { role: 'shop', shop } 或 null
+function identify(req) {
+  // 通道一：管理员会话 Cookie
+  const m = /admin_session=([^;]+)/.exec(req.headers.cookie || '');
+  if (m && verifyAdminSession(m[1])) return { role: 'admin' };
+  // 通道二：Shopify 嵌入式会话令牌（Authorization 头）
+  const authz = req.headers.authorization || '';
+  if (authz.startsWith('Bearer ')) {
+    const s = verifyShopifyToken(authz.slice(7));
+    if (s && s.shop) return { role: 'shop', shop: s.shop };
   }
+  return null;
+}
+
+// 仪表盘页面（支持商店后台嵌入与直接访问；数据由接口层保护）
+app.get('/dashboard', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
-// 订单列表（含最新风控评估）
+// 订单列表（含最新风控评估）——需管理员会话或商店嵌入式令牌
 app.get('/api/orders', (req, res) => {
+  const who = identify(req);
+  if (!who) return res.status(401).json({ error: 'unauthorized' });
   try {
-    res.json({ orders: listOrders(req.query.shop || null) });
+    // 商店身份只能看自己商店的订单；管理员可看全部或指定商店
+    const shop = who.role === 'shop' ? who.shop : (req.query.shop || null);
+    res.json({ orders: listOrders(shop), role: who.role });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -85,6 +119,12 @@ try {
 }
 
 const PORT = process.env.PORT || 3000;
+
+// 启动时初始化管理员账户（环境变量配置）
+if (process.env.ADMIN_USER && process.env.ADMIN_PASS) {
+  setAdminUser(process.env.ADMIN_USER, process.env.ADMIN_PASS);
+  console.log('Admin user initialized:', process.env.ADMIN_USER);
+}
 
 // 健康检查
 app.get('/health', (req, res) => {

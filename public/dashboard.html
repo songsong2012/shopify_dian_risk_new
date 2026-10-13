@@ -142,6 +142,7 @@ function escapeHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').r
 async function load() {
   try {
     const r = await fetch('/api/orders');
+    if (r.status === 401) { location.href = '/login'; return; }
     const d = await r.json();
     orders = d.orders || [];
     render();
